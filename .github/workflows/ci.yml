@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: test
+        run: cargo test --locked --release --target x86_64-pc-windows-msvc
+      - name: clippy
+        run: cargo clippy --locked --release --target x86_64-pc-windows-msvc --all-targets -- -D warnings
+      - name: fmt
+        run: cargo fmt --check
+      - name: Package
+        shell: pwsh
+        run: ./scripts/package.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ConsoleSilence-windows-x64
+          path: dist/ConsoleSilence.zip
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ConsoleSilence-windows-x64
+      - name: Publish Windows archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" ConsoleSilence.zip
+          --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+          --notes "Extract ConsoleSilence.asi into Bin/Win64 alongside KingdomCome.exe and the x64 Ultimate ASI Loader. Supports Steam BuildID 22623230."

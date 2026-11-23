@@ -1,0 +1,20 @@
+[package]
+name = "console-silence"
+version = "0.1.0"
+edition = "2021"
+description = "KCD1 ASI plugin: decide what the engine console shows, driven from mod Lua."
+license = "MIT"
+repository = "https://github.com/muyuanjin/kcd1-console-silence"
+keywords = ["kcd1", "asi", "modding", "console"]
+categories = ["game-development"]
+publish = false
+
+[lib]
+name = "console_silence"
+crate-type = ["cdylib"]
+
+[dependencies]
+kcd1-abi = { path = "../kcd1-abi" }
+regex-automata = "0.4"
+regex-syntax = "0.8"
+crossbeam-queue = "0.3"

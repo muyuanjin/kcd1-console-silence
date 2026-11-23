@@ -1,0 +1,125 @@
+# FOR MOD AUTHORS
+
+ConsoleSilence only decides what the **engine console** shows. `kcd.log` is untouched and
+every console command still executes — a matched command simply stops being echoed.
+
+The plugin ships with **zero rules** and reads no configuration, so it changes nothing
+until a mod asks it to. Silencing your own spam costs two lines.
+
+---
+
+## Shortest version
+
+Wherever your script runs once at load time (top level, or your `Init`):
+
+```lua
+if ConsoleSilence then
+    ConsoleSilence.mute("r_ColorGradingChartImage")
+end
+```
+
+Keep the `if ConsoleSilence then` guard: users may not have the ASI installed, and
+`ConsoleSilence` is `nil` for them.
+
+A bare string means **"any line containing this text is not displayed"**, ASCII
+case-insensitive.
+
+---
+
+## The LUT-guard case
+
+A guard has a window: it starts when the filter changes and stops after at most 25
+minutes. Let the rule follow the window:
+
+```lua
+local OWNER = "ERVWHDO"
+
+local function arm(ms)
+    if not ConsoleSilence then return end
+    ConsoleSilence.clear(OWNER)          -- required, see below: mute alone does not renew ttl_ms
+    ConsoleSilence.mute("r_ColorGradingChartImage", { owner = OWNER, ttl_ms = (ms or 1500000) + 60000 })
+end
+```
+
+- `owner` scopes removal: `clear("ERVWHDO")` only touches your own rules.
+- `ttl_ms` is a lifetime. The rule expires by itself, so outside the window the same line
+  becomes visible again — which is what you want if it signals a real failure.
+- **Renewal is not implicit.** Repeating `mute` with the same `(owner, pattern)` returns the
+  same id and leaves `ttl_ms` where it was. A mod that re-arms its guard on every filter
+  change must `clear(owner)` first, otherwise the rule dies 25 minutes after the *first*
+  arm while the guard keeps running.
+- **One warning cannot be caught at all.** `Unsupported color chart dimensions` is emitted
+  through `ILog`, not the console (`RE_FINDINGS.md` §3.1), so it never reaches `PrintLine`
+  and no rule will ever match it. Do not register one; it would only look like protection.
+
+If a status line should stay visible but must not repeat 60 times a second, throttle it:
+
+```lua
+ConsoleSilence.mute("[MyMod] rebuilding sky", { action = "throttle:5000", owner = "MyMod" })
+```
+
+`throttle:5000` lets the first line per 5 seconds through and folds the rest.
+
+---
+
+## Arguments
+
+```lua
+local id = ConsoleSilence.mute(pattern [, opts])
+```
+
+| `opts` field | Values | Default | Meaning |
+|---|---|---|---|
+| `kind` | `contains` `prefix` `suffix` `equals` `wildcard` `regex` | `contains` | how a line is recognised |
+| `action` | `"drop"` / `"throttle:<ms>"` | `drop` | swallow it, or let one through per window |
+| `owner` | string | `""` | ownership, used by `clear(owner)` |
+| `ttl_ms` | milliseconds, `0` = forever | `0` | lifetime |
+
+The other entry points:
+
+```lua
+ConsoleSilence.unmute(id)          -- undo (idempotent)
+ConsoleSilence.clear("ERVWHDO")    -- remove all of your rules, returns the count
+ConsoleSilence.list()              -- rules in effect, with hit counts
+ConsoleSilence.stats()             -- seen / dropped / passed / commandsSilenced ...
+ConsoleSilence.which(line)         -- id of the rule that would swallow it, or nil
+ConsoleSilence.enabled(false)      -- master switch: swallow nothing (A/B comparison)
+ConsoleSilence.observe(true)       -- record console input in consolesilence.log
+ConsoleSilence.fold(true)          -- collapse identical repeated lines
+```
+
+## Three things to get right
+
+1. **A bare string is always literal.** Regexes must be explicit: `{ kind = "regex" }`.
+   The pattern is compiled at `mute` time, so a typo throws immediately instead of failing
+   silently later.
+2. **In `wildcard`, only `*` and `?` are special** — `[ ] . ( )` are ordinary characters.
+   `ConsoleSilence.mute("[MyMod] guard*", { kind = "wildcard" })` matches the bracket
+   literally, while the same string as a regex is a character class.
+3. **Call `mute` at init and on state changes, not every frame.** Repeating the same
+   `(owner, pattern)` is idempotent and returns the same id — and, by the same rule,
+   **does not extend `ttl_ms`**. To renew a lifetime, `clear(owner)` first.
+
+## When you are not sure what to silence
+
+```lua
+-- paste the console line verbatim and ask who would swallow it
+local id = ConsoleSilence.which("$4[MyMod] guard stopped")
+print(id)
+```
+
+With no rules yet, turn on observe mode and look at what is actually flooding:
+
+```lua
+ConsoleSilence.observe(true)       -- start recording console input
+ConsoleSilence.observe(false)      -- stop early if you have enough (8 MiB per session)
+```
+
+---
+
+## What it never does
+
+- does not modify `kcd.log` — support logs stay complete;
+- does not stop commands — a matched command still takes effect, it is only not echoed;
+- does not persist anything — rules added at runtime are gone after the session, so add
+  them from your Lua each launch.
